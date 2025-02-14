@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PNG Edge Detection</title>
+    <title>PNG Edge Bleed</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -36,15 +36,6 @@
             flex: 1;
             min-width: 300px;
         }
-        .settings {
-            margin-top: 15px;
-        }
-        .setting-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 10px;
-        }
         input[type="range"] {
             width: 200px;
         }
@@ -53,32 +44,41 @@
             max-width: 100%;
             height: auto;
         }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>PNG 透明边缘检测</h1>
+        <h1>PNG Edge Bleed for Stickers</h1>
         <div class="controls">
             <input type="file" id="imageInput" accept="image/png">
             <div class="settings">
-                <div class="setting-item">
-                    <label>出血宽度:</label>
-                    <input type="range" id="bleedWidth" min="1" max="50" value="3">
-                    <span id="bleedWidthValue">3px</span>
-                </div>
+                <label>Bleed Width:</label>
+                <input type="range" id="bleedWidth" min="1" max="50" value="3">
+                <span id="bleedWidthValue">3px</span>
             </div>
         </div>
 
         <div class="canvas-container">
             <div class="canvas-box">
-                <h3>原图</h3>
+                <h3>Original Image</h3>
                 <canvas id="sourceCanvas"></canvas>
             </div>
             <div class="canvas-box">
-                <h3>边缘检测结果</h3>
+                <h3>Processed Image</h3>
                 <canvas id="resultCanvas"></canvas>
             </div>
         </div>
+
+        <button id="downloadButton">Download Processed Image</button>
     </div>
 
     <script>
@@ -89,7 +89,6 @@
         
         let originalImage = null;
 
-        // 加载图片并检测边缘
         document.getElementById('imageInput').addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
@@ -97,15 +96,12 @@
                 reader.onload = (event) => {
                     originalImage = new Image();
                     originalImage.onload = () => {
-                        // 设置画布尺寸
                         sourceCanvas.width = resultCanvas.width = originalImage.width;
                         sourceCanvas.height = resultCanvas.height = originalImage.height;
                         
-                        // 绘制原图
                         sCtx.clearRect(0, 0, sourceCanvas.width, sourceCanvas.height);
                         sCtx.drawImage(originalImage, 0, 0);
                         
-                        // 检测并绘制边缘
                         detectAndDrawEdges();
                     };
                     originalImage.src = event.target.result;
@@ -114,10 +110,8 @@
             }
         });
 
-         // 修改 getDominantColor 函数，添加必要的参数
-        function getDominantColor(x, y, searchRadius = 3, sourceData, width, height) {
+        function getDominantColor(x, y, searchRadius, sourceData, width, height) {
             const colors = [];
-            // 在更大范围内搜索不透明像素
             for (let dy = -searchRadius; dy <= searchRadius; dy++) {
                 for (let dx = -searchRadius; dx <= searchRadius; dx++) {
                     const nx = x + dx;
@@ -125,10 +119,9 @@
                     
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                         const idx = (ny * width + nx) * 4;
-                        // 只考虑完全不透明的像素作为颜色来源
                         if (sourceData[idx + 3] === 255) {
                             const distance = Math.sqrt(dx * dx + dy * dy);
-                            const weight = 1 / (1 + distance);
+                            const weight = Math.exp(-distance);
                             colors.push({
                                 r: sourceData[idx],
                                 g: sourceData[idx + 1],
@@ -163,44 +156,27 @@
             const height = sourceCanvas.height;
             const bleedWidth = parseInt(document.getElementById('bleedWidth').value);
             
-            // 保持结果画布与源画布相同大小
             resultCanvas.width = width;
             resultCanvas.height = height;
             
             const imageData = sCtx.getImageData(0, 0, width, height);
             const data = imageData.data;
             
-            // 创建新的图像数据，大小与原图相同
             const resultData = new ImageData(
-                new Uint8ClampedArray(width * height * 4),
+                new Uint8ClampedArray(data),
                 width
             );
 
-            // 首先复制原始图像数据
-            for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                    const idx = (y * width + x) * 4;
-                    resultData.data[idx] = data[idx];
-                    resultData.data[idx + 1] = data[idx + 1];
-                    resultData.data[idx + 2] = data[idx + 2];
-                    resultData.data[idx + 3] = data[idx + 3];
-                }
-            }
-
-            // 处理边缘和出血区域
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const idx = (y * width + x) * 4;
                     
-                    // 如果是半透明像素
-                    if (data[idx + 3] < 255 && data[idx + 3] > 0) {
-                        // 在周围搜索不透明像素
+                    if (data[idx + 3] === 0) {
                         let hasOpaqueNeighbor = false;
                         let nearestOpaqueX = x;
                         let nearestOpaqueY = y;
-                        let minDistance = Number.MAX_VALUE; // 使用最大值作为初始距离
+                        let minDistance = Number.MAX_VALUE;
 
-                        // 在bleedWidth范围内搜索最近的不透明像素
                         for (let dy = -bleedWidth; dy <= bleedWidth; dy++) {
                             for (let dx = -bleedWidth; dx <= bleedWidth; dx++) {
                                 const nx = x + dx;
@@ -229,35 +205,27 @@
                                 resultData.data[idx + 3] = 255;
                             }
                         }
-                    } else if (data[idx + 3] === 0) {
-                        // 处理完全透明的像素
-                        let hasOpaqueNeighbor = false;
-                        let nearestOpaqueX = x;
-                        let nearestOpaqueY = y;
-                        let minDistance = Number.MAX_VALUE;
+                    } else if (data[idx + 3] < 255) {
+                        let isAdjacentToBleed = false;
 
-                        // 在bleedWidth范围内搜索最近的不透明像素
-                        for (let dy = -bleedWidth; dy <= bleedWidth; dy++) {
-                            for (let dx = -bleedWidth; dx <= bleedWidth; dx++) {
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                if (dx === 0 && dy === 0) continue;
                                 const nx = x + dx;
                                 const ny = y + dy;
                                 if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                                     const nidx = (ny * width + nx) * 4;
-                                    if (data[nidx + 3] === 255) {
-                                        const distance = Math.sqrt(dx * dx + dy * dy);
-                                        if (distance <= bleedWidth && distance < minDistance) {
-                                            minDistance = distance;
-                                            nearestOpaqueX = nx;
-                                            nearestOpaqueY = ny;
-                                            hasOpaqueNeighbor = true;
-                                        }
+                                    if (data[nidx + 3] === 0) {
+                                        isAdjacentToBleed = true;
+                                        break;
                                     }
                                 }
                             }
+                            if (isAdjacentToBleed) break;
                         }
 
-                        if (hasOpaqueNeighbor && minDistance <= bleedWidth) {
-                            const dominantColor = getDominantColor(nearestOpaqueX, nearestOpaqueY, 5, data, width, height);
+                        if (isAdjacentToBleed) {
+                            const dominantColor = getDominantColor(x, y, bleedWidth, data, width, height);
                             if (dominantColor) {
                                 resultData.data[idx] = dominantColor.r;
                                 resultData.data[idx + 1] = dominantColor.g;
@@ -269,11 +237,9 @@
                 }
             }
             
-            // 将处理后的数据绘制到结果画布
             rCtx.putImageData(resultData, 0, 0);
         }
 
-        // 添加滑块事件监听
         document.getElementById('bleedWidth').addEventListener('input', (e) => {
             document.getElementById('bleedWidthValue').textContent = `${e.target.value}px`;
             if (originalImage) {
@@ -281,6 +247,15 @@
             }
         });
 
+        function downloadImage() {
+            const link = document.createElement('a');
+            link.download = 'result.png';
+            link.href = resultCanvas.toDataURL('image/png');
+            link.click();
+        }
+
+        document.getElementById('downloadButton').addEventListener('click', downloadImage);
+
     </script>
 </body>
-</html> 
+</html>
