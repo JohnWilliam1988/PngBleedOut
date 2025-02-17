@@ -62,7 +62,7 @@
             <input type="file" id="imageInput" accept="image/png">
             <div class="settings">
                 <label>Bleed Width:</label>
-                <input type="range" id="bleedWidth" min="1" max="50" value="3">
+                <input type="range" id="bleedWidth" min="1" max="50" value="9">
                 <span id="bleedWidthValue">3px</span>
             </div>
         </div>
@@ -119,9 +119,10 @@
                     
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                         const idx = (ny * width + nx) * 4;
-                        if (sourceData[idx + 3] === 255) {
+                        const alpha = sourceData[idx + 3] / 255;
+                        if (alpha > 0) {
                             const distance = Math.sqrt(dx * dx + dy * dy);
-                            const weight = Math.exp(-distance);
+                            const weight = Math.exp(-distance) * alpha;
                             colors.push({
                                 r: sourceData[idx],
                                 g: sourceData[idx + 1],
@@ -167,6 +168,7 @@
                 width
             );
 
+            // 第一遍：处理完全透明的像素，创建出血框
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const idx = (y * width + x) * 4;
@@ -177,13 +179,14 @@
                         let nearestOpaqueY = y;
                         let minDistance = Number.MAX_VALUE;
 
+                        // 在出血宽度范围内寻找最近的不透明像素
                         for (let dy = -bleedWidth; dy <= bleedWidth; dy++) {
                             for (let dx = -bleedWidth; dx <= bleedWidth; dx++) {
                                 const nx = x + dx;
                                 const ny = y + dy;
                                 if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                                     const nidx = (ny * width + nx) * 4;
-                                    if (data[nidx + 3] === 255) {
+                                    if (data[nidx + 3] > 0) {  // 修改：考虑所有非完全透明的像素
                                         const distance = Math.sqrt(dx * dx + dy * dy);
                                         if (distance <= bleedWidth && distance < minDistance) {
                                             minDistance = distance;
@@ -196,6 +199,7 @@
                             }
                         }
 
+                        // 填充出血框
                         if (hasOpaqueNeighbor && minDistance <= bleedWidth) {
                             const dominantColor = getDominantColor(nearestOpaqueX, nearestOpaqueY, 5, data, width, height);
                             if (dominantColor) {
@@ -205,33 +209,47 @@
                                 resultData.data[idx + 3] = 255;
                             }
                         }
-                    } else if (data[idx + 3] < 255) {
-                        let isAdjacentToBleed = false;
+                    }
+                }
+            }
 
-                        for (let dy = -1; dy <= 1; dy++) {
-                            for (let dx = -1; dx <= 1; dx++) {
-                                if (dx === 0 && dy === 0) continue;
+            // 第二遍：处理所有半透明像素
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = (y * width + x) * 4;
+                    
+                    // 检查是否是半透明像素
+                    if (data[idx + 3] > 0 && data[idx + 3] < 255) {
+                        let hasTransparentNeighbor = false;
+                        let bleedColor = null;
+
+                        // 在周围搜索完全透明像素
+                        searchLoop: for (let dy = -bleedWidth; dy <= bleedWidth; dy++) {
+                            for (let dx = -bleedWidth; dx <= bleedWidth; dx++) {
                                 const nx = x + dx;
                                 const ny = y + dy;
                                 if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                                     const nidx = (ny * width + nx) * 4;
+                                    // 检查是否存在完全透明像素
                                     if (data[nidx + 3] === 0) {
-                                        isAdjacentToBleed = true;
-                                        break;
+                                        hasTransparentNeighbor = true;
+                                        // 在出血框中寻找对应的颜色
+                                        const distance = Math.sqrt(dx * dx + dy * dy);
+                                        if (distance <= bleedWidth) {
+                                            bleedColor = getDominantColor(x, y, bleedWidth, resultData.data, width, height);
+                                            break searchLoop;
+                                        }
                                     }
                                 }
                             }
-                            if (isAdjacentToBleed) break;
                         }
 
-                        if (isAdjacentToBleed) {
-                            const dominantColor = getDominantColor(x, y, bleedWidth, data, width, height);
-                            if (dominantColor) {
-                                resultData.data[idx] = dominantColor.r;
-                                resultData.data[idx + 1] = dominantColor.g;
-                                resultData.data[idx + 2] = dominantColor.b;
-                                resultData.data[idx + 3] = 255;
-                            }
+                        // 如果是边缘的半透明像素，使用出血框的颜色
+                        if (hasTransparentNeighbor && bleedColor) {
+                            resultData.data[idx] = bleedColor.r;
+                            resultData.data[idx + 1] = bleedColor.g;
+                            resultData.data[idx + 2] = bleedColor.b;
+                            resultData.data[idx + 3] = 255; // 设置为完全不透明
                         }
                     }
                 }
